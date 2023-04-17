@@ -295,15 +295,16 @@ SEMKITTI_DVPS_INFORMATION = _build_dataset_info(
 
 COCO_PANOPTIC_INFORMATION = _build_dataset_info(
     dataset_name=_COCO_PANOPTIC,
-    splits_to_sizes={'train': 118287,
-                     'val': 5000,
-                     'test': 40670},
-    num_classes=134,
-    ignore_label=0,
-    panoptic_label_divisor=256,
-    class_has_instances_list=tuple(range(1, 81)),
+    splits_to_sizes={'train': 1,
+                     'val': 1,
+                     'test': 1},
+    num_classes=2,
+    ignore_label=255,
+    panoptic_label_divisor=25, #set greater than max number of instances/image possible
+    #class_has_instances_list=tuple(range(1, 81)),
+    class_has_instances_list=(),  #since we are doing only semantic segmentation, keeping this empty
     is_video_dataset=False,
-    colormap=COCO_COLORMAP,
+    colormap=COCO_COLORMAP,  #read more and set this from ${DEEPLAB2}/trainer/vis_utils.py
     is_depth_dataset=False,
     ignore_depth=None,
 )

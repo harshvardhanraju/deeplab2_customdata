@@ -27,7 +27,7 @@ from deeplab2.model import deeplab
 from deeplab2.trainer import runner_utils
 # resources dependency
 
-_CONFIG_PATH = 'deeplab2/configs/example'
+_CONFIG_PATH = 'deeplab2\configs\example'
 
 
 def _read_proto_file(filename, proto):

@@ -48,7 +48,7 @@ flags.DEFINE_boolean('treat_crowd_as_ignore', True,
                      'Whether to apply ignore labels to crowd pixels in '
                      'panoptic label.')
 
-_NUM_SHARDS = 1000
+_NUM_SHARDS = 1
 
 
 _SPLITS_TO_SIZES = dataset.COCO_PANOPTIC_INFORMATION.splits_to_sizes
@@ -56,6 +56,12 @@ _IGNORE_LABEL = dataset.COCO_PANOPTIC_INFORMATION.ignore_label
 _CLASS_HAS_INSTANCE_LIST = dataset.COCO_PANOPTIC_INFORMATION.class_has_instances_list
 _PANOPTIC_LABEL_DIVISOR = dataset.COCO_PANOPTIC_INFORMATION.panoptic_label_divisor
 _CLASS_MAPPING = coco_constants.get_id_mapping()
+
+# please change these hardcoded values
+annotation_file_train = "panoptic_train2017.json"
+annotation_file_val = "panoptic_val2017.json"
+annotation_file_test = "panoptic_test2017.json"
+
 
 # A map from data type to folder name that saves the data.
 _FOLDERS_MAP = {
@@ -75,7 +81,7 @@ _FOLDERS_MAP = {
 
 # A map from data type to data format.
 _DATA_FORMAT_MAP = {
-    'image': 'jpg',
+    'image': 'png',
     'label': 'png',
 }
 _PANOPTIC_LABEL_FORMAT = 'raw'
@@ -94,8 +100,10 @@ def _get_images(coco_root: str, dataset_split: str) -> Sequence[str]:
   pattern = '*.%s' % _DATA_FORMAT_MAP['image']
   search_files = os.path.join(
       coco_root, _FOLDERS_MAP[dataset_split]['image'], pattern)
-  filenames = tf.io.gfile.glob(search_files)
-  return sorted(filenames)
+  print("search file", search_files)
+  filenames_path = tf.io.gfile.glob(search_files)
+  print("filenames:",filenames_path)
+  return sorted(filenames_path)
 
 
 def _get_panoptic_annotation(coco_root: str, dataset_split: str,
@@ -127,15 +135,18 @@ def _read_segments(coco_root: str, dataset_split: str):
     panoptic_dataset = json.load(f)
 
   segments_dict = {}
+  segments_lst_of_dict = []
   for annotation in panoptic_dataset['annotations']:
     image_id = annotation['image_id']
-    if image_id in segments_dict:
-      raise ValueError('Image ID %s already exists' % image_id)
-    annotation_file_name = annotation['file_name']
-    segments = annotation['segments_info']
-
-    segments_dict[os.path.splitext(annotation_file_name)[-2]] = (
-        annotation_file_name, segments)
+    if image_id in segments_dict: #this condition is never true? as segment_dict doesnt have image_id, rather img_name as keys
+      raise ValueError('Image ID %s already exists' % image_id) 
+    
+    annotation_file_name = panoptic_dataset['images'][0]["file_name"] # this needs modification. check the format of this string
+    
+    segments_lst_of_dict.append(annotation)  #segments_lst_of_dict is a list of dict of all segments in 1 image
+    #segments = {'id': annotation['id'] 'category_id': , 'area': , 'iscrowd': ,'segment_pixels':, 'bbox':, }
+    segments_dict[os.path.splitext(annotation_file_name)[-2].split(os.sep)[-1]] = (
+        annotation_file_name, segments_lst_of_dict)
 
   return segments_dict
 
@@ -159,37 +170,60 @@ def _generate_panoptic_label(panoptic_annotation_file: str, segments:
     annotation. Each pixel value represents its panoptic ID. Please refer to
     g3doc/setup/coco.md for more details about how panoptic ID is assigned.
   """
+  import numpy as np
+  import cv2
+ 
+  
   with tf.io.gfile.GFile(panoptic_annotation_file, 'rb') as f:
     panoptic_label = data_utils.read_image(f.read())
-
+  
+    
+  print("panop label: ", panoptic_label)
   if panoptic_label.mode != 'RGB':
     raise ValueError('Expect RGB image for panoptic label, gets %s' %
                      panoptic_label.mode)
 
   panoptic_label = np.array(panoptic_label, dtype=np.int32)
+  print(panoptic_label.dtype)
+  uint8_array = np.uint8(panoptic_label)
+
+
+  cv2.imshow("pan label", uint8_array)
+  cv2.waitKey(0)
+  cv2.destroyAllWindows()
+
+  
+ 
   # COCO panoptic map is created by:
   #   color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
+  
   panoptic_label = np.dot(panoptic_label, [1, 256, 256 * 256])
-
+  instance_label = np.zeros_like(panoptic_label) 
   semantic_label = np.ones_like(panoptic_label) * _IGNORE_LABEL
-  instance_label = np.zeros_like(panoptic_label)
+  
+  print(np.nonzero(semantic_label))
   # Running count of instances per semantic category.
   instance_count = collections.defaultdict(int)
-
+  print("segments at 199:", segments)
   for segment in segments:
-    selected_pixels = panoptic_label == segment['id']
+    print(segment["id"])
+    selected_pixels = panoptic_label == segment['id'] #checks which image pixels are same as segment_id(here = 1)
     pixel_area = np.sum(selected_pixels)
+    
+    """
     if pixel_area != segment['area']:
       raise ValueError('Expect %d pixels for segment %s, gets %d.' %
                        (segment['area'], segment, pixel_area))
-
+   """
+    
     category_id = segment['category_id']
 
     # Map the category_id to contiguous ids
     category_id = _CLASS_MAPPING[category_id]
 
     semantic_label[selected_pixels] = category_id
-
+    
+    # this whole section gets ignored if we are doing semantic segmentation only
     if category_id in _CLASS_HAS_INSTANCE_LIST:
       if segment['iscrowd']:
         # COCO crowd pixels will have instance ID of 0.
@@ -236,13 +270,15 @@ def _create_panoptic_label(coco_root: str, dataset_split: str, image_path: str,
   image_path = os.path.normpath(image_path)
   path_list = image_path.split(os.sep)
   file_name = path_list[-1]
-
+  print("dict keys", segments_dict.keys())
+  print("Printing file name and dataset split", file_name, dataset_split)
   annotation_file_name, segments = segments_dict[
       os.path.splitext(file_name)[-2]]
   panoptic_annotation_file = _get_panoptic_annotation(coco_root,
                                                       dataset_split,
                                                       annotation_file_name)
 
+  print("segments at 259 :", segments)
   panoptic_label = _generate_panoptic_label(panoptic_annotation_file, segments)
   return panoptic_label.tostring(), _PANOPTIC_LABEL_FORMAT
 
@@ -256,14 +292,18 @@ def _convert_dataset(coco_root: str, dataset_split: str,
     dataset_split: String, the dataset split (one of `train`, `val` and `test`).
     output_dir: String, directory to write output TFRecords to.
   """
-  image_files = _get_images(coco_root, dataset_split)
+  print(coco_root, dataset_split )
+  image_files_paths = _get_images(coco_root, dataset_split)
 
-  num_images = len(image_files)
+
+  num_images = len(image_files_paths)
+  print("No. Images:", num_images)
 
   if dataset_split != 'test':
     segments_dict = _read_segments(coco_root, dataset_split)
+    print("segment dict:", segments_dict)
 
-  num_per_shard = int(math.ceil(len(image_files) / _NUM_SHARDS))
+  num_per_shard = int(math.ceil(len(image_files_paths) / _NUM_SHARDS))
 
   for shard_id in range(_NUM_SHARDS):
     shard_filename = '%s-%05d-of-%05d.tfrecord' % (
@@ -274,17 +314,17 @@ def _convert_dataset(coco_root: str, dataset_split: str,
       end_idx = min((shard_id + 1) * num_per_shard, num_images)
       for i in range(start_idx, end_idx):
         # Read the image.
-        with tf.io.gfile.GFile(image_files[i], 'rb') as f:
+        with tf.io.gfile.GFile(image_files_paths[i], 'rb') as f:
           image_data = f.read()
 
         if dataset_split == 'test':
           label_data, label_format = None, None
         else:
           label_data, label_format = _create_panoptic_label(
-              coco_root, dataset_split, image_files[i], segments_dict)
+              coco_root, dataset_split, image_files_paths[i], segments_dict)
 
         # Convert to tf example.
-        image_path = os.path.normpath(image_files[i])
+        image_path = os.path.normpath(image_files_paths[i])
         path_list = image_path.split(os.sep)
         file_name = path_list[-1]
         file_prefix = os.path.splitext(file_name)[0]
@@ -297,13 +337,18 @@ def _convert_dataset(coco_root: str, dataset_split: str,
 
 
 def main(unused_argv: Sequence[str]) -> None:
-  tf.io.gfile.makedirs(FLAGS.output_dir)
+  coco_root = "D:\Harsha\data\labelme_test"
+  output_dir = "D:\\Harsha\\data\\labelme_test\\tfrecord"
+  tf.io.gfile.makedirs(output_dir)
+  #tf.io.gfile.makedirs(FLAGS.output_dir)
 
   for dataset_split in ('train', 'val', 'test'):
     logging.info('Starts processing dataset split %s.', dataset_split)
-    _convert_dataset(FLAGS.coco_root, dataset_split, FLAGS.output_dir)
+ 
+    _convert_dataset(coco_root, dataset_split, output_dir)
+    #_convert_dataset(FLAGS.coco_root, dataset_split, FLAGS.output_dir)
 
 
 if __name__ == '__main__':
-  flags.mark_flags_as_required(['coco_root', 'output_dir'])
+  #flags.mark_flags_as_required(['coco_root', 'output_dir'])
   app.run(main)
