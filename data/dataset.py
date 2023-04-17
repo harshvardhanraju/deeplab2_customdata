@@ -295,12 +295,12 @@ SEMKITTI_DVPS_INFORMATION = _build_dataset_info(
 
 COCO_PANOPTIC_INFORMATION = _build_dataset_info(
     dataset_name=_COCO_PANOPTIC,
-    splits_to_sizes={'train': 1,
+    splits_to_sizes={'train': 2
                      'val': 1,
                      'test': 1},
     num_classes=2,
     ignore_label=255,
-    panoptic_label_divisor=25, #set greater than max number of instances/image possible
+    panoptic_label_divisor=20, #set greater than max number of instances/image possible
     #class_has_instances_list=tuple(range(1, 81)),
     class_has_instances_list=(),  #since we are doing only semantic segmentation, keeping this empty
     is_video_dataset=False,
